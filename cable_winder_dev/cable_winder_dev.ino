@@ -36,7 +36,7 @@ const int MODE_REVERSING = 5; // move the guide but not the winder to change dir
 
 class cableWinder
 {
-// private members, distances are in steps and speeds in steps per second
+    // private members, distances are in steps and speeds in steps per second
     AccelStepper *guideStepper, *winderStepper;
 
     // user adjusted settings and defaults
@@ -50,14 +50,19 @@ class cableWinder
     long guideTargetPosition; // only used when repositioning guide
     int runMode = MODE_STOPPED;
 
-// public members, return values are in mm of movement on the guide, turns of the winder, and seconds
+    // public members, return values are in mm of movement on the guide, turns of the winder, and seconds
   public:
 
     cableWinder(int pins[8]); // constructor sets defaults
     void windCable(float distance); // passing 0.0f keeps current target position
     void moveWinder(float distance); // move the winder a distance in cm
     void moveGuide(float distance); // move the stepper a distance in cm
-    void setGuidePosition(float distance); // sets the current position of the guide stepper in cm
+    void setGuidePosition(float distance) {
+      guideStepper->setCurrentPosition(distance * StepsPerRev / LeadScrewPitch);
+    }; // sets the current position of the guide stepper in cm
+    float getGuidePosition() {
+      return guideStepper->currentPosition() * LeadScrewPitch / StepsPerRev;
+    }; // get current guide posiiton in mm
     void haltSteppers();
     void pauseSteppers() {
       runMode = MODE_STOPPED;
@@ -258,6 +263,7 @@ void setup() {
     Serial.println("P          : Change the wind pitch (input:float) mm per revolution.");
     Serial.println("H          : Halt the winder.");
     Serial.println("C          : Set the guide movement hysteresis compensation distance to (input:float) mm.");
+    Serial.println("O          : Set the current guide position to (input:float) in mm from left most limit.");
     Serial.println("?          : Display current settings.");
   }
 
@@ -304,9 +310,18 @@ void parseSerial() {
 
       case 'C' :
 
-        winder->setHysteresis( Serial.parseFloat());
+        winder->setHysteresis(Serial.parseFloat());
         Serial.print("Guide hysteresis compensation set to ");
         Serial.print(winder->getHysteresis());
+        Serial.print(" mm.");
+        winder->displaySettings();
+        break;
+        
+      case 'O' :
+
+        winder->setGuidePosition(Serial.parseFloat());
+        Serial.print("Guide position set to ");
+        Serial.print(winder->getGuidePosition());
         Serial.print(" mm.");
         winder->displaySettings();
         break;
