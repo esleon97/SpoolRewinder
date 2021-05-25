@@ -49,6 +49,8 @@ class cableWinder
     long guideUpperLimit = SpoolStepWidth + GuideStepHysteresis;
     long guideTargetPosition; // only used when repositioning guide
     int runMode = MODE_STOPPED;
+    // trying without resume mode by simply starting in reversing mode when resuming
+    //    int resumeMode = MODE_STOPPED; // if set to MODE_REVERSING or MODE_WINGING then when winder resumes in this mode
 
     // public members, return values are in mm of movement on the guide, turns of the winder, and seconds
   public:
@@ -65,6 +67,7 @@ class cableWinder
     }; // get current guide posiiton in mm
     void haltSteppers();
     void pauseSteppers() {
+      //      resumeMode = runMode;
       runMode = MODE_STOPPED;
     };
     void calcSpeed() {
@@ -105,7 +108,7 @@ class cableWinder
     };
     void setGuideDirection(int dir = 0) {
       if (dir == 0) guideSpeed = -guideSpeed;
-      else if (dir>0) guideSpeed = abs(guideSpeed);
+      else if (dir > 0) guideSpeed = abs(guideSpeed);
       else guideSpeed = -abs(guideSpeed);
     } // set the direction the guide is moving, positive is to right, negative is to left, 0 reverses
 };
@@ -127,15 +130,16 @@ void cableWinder::onLoop() {
   if (runMode & MODE_WINDER) { // if winder is moving for any reason check if it's done
     // check if target position reached
     if ((winderStepper->currentPosition() >= 0 && winderSpeed > 0.0f) // increasing past target position
-        | (winderStepper->currentPosition() <= 0 && winderSpeed < 0.0f)) { // decreasing past target position
+        || (winderStepper->currentPosition() <= 0 && winderSpeed < 0.0f)) { // decreasing past target position
       Serial.println((runMode & MODE_WINDING) ? "Winding complete." : "Winder movement complete.");
       runMode = MODE_STOPPED;
     }
   }
-  // check for reverse condition
-  if (((guideStepper->currentPosition() <= guideLowerLimit && guideSpeed < 0.0f) // moving past lower limit
-       || (guideStepper->currentPosition() >= guideUpperLimit && guideSpeed > 0.0f)) // moving past upper limit
-      && (runMode == MODE_WINDING)) { // only do this when in winding mode
+  
+  // check if guide direction needs to be reversed
+  if ((runMode == MODE_WINDING) // only do this when in winding mode
+      && ((guideStepper->currentPosition() <= guideLowerLimit && guideSpeed < 0.0f) // moving past lower limit
+          || (guideStepper->currentPosition() >= guideUpperLimit && guideSpeed > 0.0f))) { // moving past upper limit
     // reverse direction
     guideSpeed = -guideSpeed;
     guideStepper->setSpeed(guideSpeed);
@@ -143,13 +147,16 @@ void cableWinder::onLoop() {
     Serial.println(F("Reversing guide direction."));
 
   }
+
+  // check if hysteresis compensation movement is complete when reversiong
   if ((runMode == MODE_REVERSING) && // check if guide movement hysteresis compensation is complete after reversing
       ((guideStepper->currentPosition() <= guideUpperLimit - guideHysteresis && guideSpeed < 0.0f) // finished hystersis from upper limit reverse
        || (guideStepper->currentPosition() >= guideLowerLimit + guideHysteresis && guideSpeed > 0.0f))) { // finished hystersis from lower limit reverse
     runMode = MODE_WINDING;
     Serial.println(F("Completed guide hysteresis compensation movement."));
   }
-
+  
+  // check if only moving guide and that movement is complete
   if ((runMode == MODE_GUIDE) && // check if guide only movement complete
       ((guideStepper->currentPosition() <= guideTargetPosition && guideSpeed < 0.0f) // decreasing past goal
        || (guideStepper->currentPosition() >= guideTargetPosition && guideSpeed > 0.0f))) { // increasing past goal
@@ -174,7 +181,9 @@ void cableWinder::windCable(float distance = 0.0f) {
     // set the winder direction
     if (distance < 0.0f) winderSpeed = -abs(winderSpeed); // set winder to unwind
     else winderSpeed = abs(winderSpeed); // set winder to wind
-  }
+    runMode = MODE_REVERSING; // onLoop will correct this condition if necessary before stepping motor anyway
+  } else // set to run both steppers
+    runMode = MODE_WINDING;
 
   // Enable outputs
   winderStepper->enableOutputs();
@@ -186,8 +195,6 @@ void cableWinder::windCable(float distance = 0.0f) {
   winderStepper->setSpeed(winderSpeed);
   guideStepper->setSpeed(guideSpeed);
 
-  // set to run both steppers
-  runMode = MODE_WINDING;
 }
 
 // move the winder without moving the guide
@@ -286,19 +293,19 @@ void parseSerial() {
     char arg = Serial.read();
     switch (toUpperCase(arg)) {
 
-      case 'M':
+      case 'M': // move the winder
         winder->moveWinder(Serial.parseFloat());
         break;
 
-      case 'G':
+      case 'G': // move the guide
         winder->moveGuide(Serial.parseFloat());
         break;
 
-      case 'R':
+      case 'R': // wind cable
         winder->windCable(Serial.parseFloat());
         break;
 
-      case 'W' :
+      case 'S' : // set winder speed
         winder->setWinderSpeed(Serial.parseFloat());
         Serial.print(F("Winder speed set to "));
         Serial.print(winder->getWinderSpeed());
@@ -306,7 +313,7 @@ void parseSerial() {
         winder->displaySettings();
         break;
 
-      case 'P' :
+      case 'P' : // set pitch
         winder->setWindPitch(Serial.parseFloat());
         Serial.print(F("Wind pitch set to "));
         Serial.print(winder->getWindPitch());
@@ -314,15 +321,15 @@ void parseSerial() {
         winder->displaySettings();
         break;
 
-      case 'C' :
+      case 'C' : // set hysteresis compensation
         winder->setHysteresis(Serial.parseFloat());
         Serial.print(F("Guide hysteresis compensation set to "));
         Serial.print(winder->getHysteresis());
         Serial.print(F(" mm."));
         winder->displaySettings();
         break;
-        
-      case 'O' :
+
+      case 'O' : // set current guide position
         winder->setGuidePosition(Serial.parseFloat());
         Serial.print(F("Guide position set to "));
         Serial.print(winder->getGuidePosition());
@@ -330,20 +337,20 @@ void parseSerial() {
         winder->displaySettings();
         break;
 
-      case 'D' :
+      case 'D' : // change guide direction
         winder->setGuideDirection(Serial.parseInt());
         Serial.print(F("Guide speed set to "));
         Serial.print(winder->getGuideSpeed());
         Serial.print(F(" revolustions/second."));
         winder->displaySettings();
         break;
-        
-      case 'H' :
+
+      case 'H' : // halt
         Serial.println(F("Turning off steppers."));
         winder->haltSteppers();
         break;
 
-      case '?' :
+      case '?' : // display settings
         winder->displaySettings();
         break;
     }
